@@ -1,0 +1,42 @@
+name: Deploy chat
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/configure-pages@v5
+      - name: Build site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p site/model
+          cp index.html site/
+          npm install @wllama/wllama
+          cp -r node_modules/@wllama/wllama/esm site/esm
+          gh release download v1 --repo ${{ github.repository }} --pattern '*.gguf' --dir .
+          split -b 90M "$(ls *.gguf | head -1)" site/model/part_
+          ls site/model | sort | python3 -c "import sys,json;print(json.dumps(sys.stdin.read().split()))" > parts.json
+          mv parts.json site/model/parts.json
+          ls -la site/model
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

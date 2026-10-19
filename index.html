@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gemma চ্যাট</title>
+<style>
+:root{--bg:#f2f5f3;--card:#fff;--ink:#14231e;--mute:#5d6f68;--acc:#1f7a5c;--me:#1f7a5c;--meink:#fff;--line:#d7e0dc}
+@media (prefers-color-scheme:dark){:root{--bg:#101815;--card:#18231f;--ink:#e6efeb;--mute:#8da39a;--acc:#4fc39a;--me:#2d8a6a;--meink:#fff;--line:#27362f}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0)}
+header{padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+h1{font-size:1.1rem;margin:0}
+#status{font-size:.85rem;color:var(--mute);margin-top:2px}
+#log{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:85%;padding:10px 13px;border-radius:14px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;background:var(--card);border:1px solid var(--line)}
+.m.u{align-self:flex-end;background:var(--me);color:var(--meink);border-color:var(--me)}
+.empty{margin:auto;text-align:center;color:var(--mute);max-width:280px}
+button{font:inherit;border:0;border-radius:12px;padding:11px 16px;background:var(--acc);color:#fff;cursor:pointer}
+button:disabled{opacity:.5}
+button:focus-visible,textarea:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+form{display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0));border-top:1px solid var(--line);background:var(--card)}
+textarea{flex:1;font:inherit;resize:none;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--bg);color:var(--ink);max-height:120px}
+</style>
+</head>
+<body>
+<header><h1>Gemma চ্যাট</h1><div id="status">মডেল এখনও লোড হয়নি</div></header>
+<div id="log"><div class="empty" id="empty"><p>চ্যাট শুরু করতে আগে মডেল লোড করো। প্রথমবার ২৪১MB নামবে, পরে ফোনেই জমা থাকবে।</p><button id="load">মডেল লোড করো</button></div></div>
+<form id="f"><textarea id="q" rows="1" placeholder="কিছু লেখো…" disabled></textarea><button id="send" disabled>পাঠাও</button></form>
+<script type="module">
+import { Wllama } from './esm/index.js';
+const $ = s => document.querySelector(s);
+const wllama = new Wllama({ default: './esm/wasm/wllama.wasm' });
+let history = [], busy = false;
+const status = t => $('#status').textContent = t;
+function add(role, text){
+  const d = document.createElement('div');
+  d.className = 'm ' + (role === 'user' ? 'u' : 'a');
+  d.textContent = text;
+  $('#log').appendChild(d);
+  $('#log').scrollTop = 1e9;
+  return d;
+}
+async function getPart(url){
+  try{
+    const c = await caches.open('gemma-model-v1');
+    let r = await c.match(url);
+    if(!r){ r = await fetch(url); if(!r.ok) throw new Error(url + ' ' + r.status); await c.put(url, r.clone()); }
+    return await r.blob();
+  }catch(e){
+    const r = await fetch(url);
+    if(!r.ok) throw e;
+    return await r.blob();
+  }
+}
+$('#load').onclick = async () => {
+  $('#load').disabled = true;
+  try{
+    const parts = await (await fetch('model/parts.json')).json();
+    const blobs = [];
+    for(let i = 0; i < parts.length; i++){
+      status('মডেল নামছে ' + (i + 1) + '/' + parts.length);
+      blobs.push(await getPart('model/' + parts[i]));
+    }
+    status('মডেল চালু হচ্ছে… একটু অপেক্ষা করো');
+    // n_gpu_layers: 0 = শুধু CPU, ফোনে বেশি স্থিতিশীল
+    await wllama.loadModel([new Blob(blobs)], { n_ctx: 2048, n_gpu_layers: 0 });
+    $('#empty').remove();
+    status('প্রস্তুত');
+    $('#q').disabled = false; $('#send').disabled = false; $('#q').focus();
+  }catch(e){
+    console.error(e);
+    status('লোড হয়নি: ' + (e.message || e));
+    $('#load').disabled = false;
+  }
+};
+$('#f').onsubmit = async ev => {
+  ev.preventDefault();
+  const text = $('#q').value.trim();
+  if(!text || busy) return;
+  busy = true; $('#q').value = ''; $('#send').disabled = true;
+  add('user', text);
+  history.push({ role: 'user', content: text });
+  const bubble = add('assistant', '…');
+  status('উত্তর লেখা হচ্ছে…');
+  try{
+    const res = await wllama.createChatCompletion({
+      messages: history.slice(-6),
+      max_tokens: 256, temperature: 0.7, top_k: 40, top_p: 0.9
+    });
+    const out = res.choices[0].message.content.trim();
+    bubble.textContent = out || '(খালি উত্তর)';
+    history.push({ role: 'assistant', content: out });
+    status('প্রস্তুত');
+  }catch(e){
+    console.error(e);
+    bubble.textContent = 'ত্রুটি: ' + (e.message || e);
+    history.pop();
+    status('ত্রুটি হয়েছে');
+  }
+  busy = false; $('#send').disabled = false;
+};
+</script>
+</body>
+</html>
