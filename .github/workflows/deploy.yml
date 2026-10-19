@@ -30,7 +30,7 @@ jobs:
           cp index.html site/
           npm install @wllama/wllama
           cp -r node_modules/@wllama/wllama/esm site/esm
-          gh release download v1 --repo ${{ github.repository }} --pattern '*.gguf' --dir .
+          curl -L -o model.gguf https://huggingface.co/NobodyWho/Google_Gemma3-270M-GGUF/resolve/main/gemma-3-270m-it-Q4_K_M.gguf
           split -b 90M "$(ls *.gguf | head -1)" site/model/part_
           ls site/model | sort | python3 -c "import sys,json;print(json.dumps(sys.stdin.read().split()))" > parts.json
           mv parts.json site/model/parts.json
